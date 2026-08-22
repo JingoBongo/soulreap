@@ -52,7 +52,7 @@ First run resolves dependencies, so allow ~120s; afterwards it is seconds. Then 
 | `edited` | card was hand-modified | **leave it alone**, list it in the report |
 | `orphan` | source deleted | delete the card |
 
-## 2. Cards — one subagent per batch, in parallel
+## 2. Cards — one subagent per batch
 
 Each batch is independent and writes a disjoint set of `files/<path>.md` cards, so batches
 parallelize cleanly. Dispatch each batch to a subagent using whatever parallel-subagent
@@ -80,10 +80,15 @@ only lose the parallel speedup and the flat-context benefit.
 - Return **one line per file** (`<path> — <the Role sentence>`). **Never paste card bodies** —
   that blows up the parent's context on the third batch.
 
-**Pack each dispatch full.** Whatever your harness's parallel cap is, put that many batches in
-one dispatch so all lanes stay busy; a half-full dispatch leaves lanes idle, and the gap
-between one dispatch finishing and the next being issued is dead time. A big repo (600+ files)
-plans into 100+ batches — for anything that size, scope the run to a subpath instead.
+**One dispatch at a time — let the harness serialize.** Put a whole round's batches into a
+**single** dispatch (one call carrying N tasks, if your harness supports it) and let the
+harness's concurrency cap decide how many run at once. **Do NOT hand-parallelize by firing
+several dispatches simultaneously.** It matters most on a **local / single-slot model**: every
+subagent shares one inference server, so N concurrent dispatches fight over the one slot and the
+session hangs. On a local backend, either use one batched dispatch that the harness runs
+one-at-a-time, or take the serial fallback (`adapters/generic-serial.md`) outright. On a hosted
+fan-out provider, one dispatch still packs the lanes — a half-full one just leaves them idle. A
+big repo (600+ files) plans into 100+ batches — for anything that size, scope to a subpath.
 
 **Single writer.** Subagents write only their own `files/<path>.md` cards — disjoint paths,
 safe in parallel. Everything that touches the whole tree — `plan` (before), `render` (after) —
@@ -173,6 +178,7 @@ and the render verdicts.
 | Skipping `render` | `INDEX.md` and `manifest.json` go stale, next run redoes everything |
 | Pseudocode as prose summary | the reader cannot see loops, threads or failure paths — the whole point |
 | Running `--all` out of habit | full rebuild; a template version bump already forces one |
+| Several dispatches fired at once (one per batch) | N subagent fleets hit the model together; a local/single-slot model deadlocks on its one inference slot. One dispatch carrying all batches; let the harness serialize |
 | A subagent runs `render` (to fill Dependencies) | concurrent renders truncate other workers' cards and shrink `plan.json`; render is parent-only, once, at the end |
 | A subagent writes checker scripts / grep-loops to self-verify | it hits the watchdog and dies mid-write — the top cause of dropped cards; carding has no tests, forbid it in the task |
 | Trusting a subagent's "ok" instead of re-planning | timed-out or garbage workers report success; re-run `plan` and redelegate anything still `new` |
