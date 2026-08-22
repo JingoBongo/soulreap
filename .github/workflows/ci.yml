@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Lint (ruff)
+        working-directory: scripts
+        run: uv run --with ruff ruff check --config ruff.toml .
+      - name: Tests (pytest)
+        working-directory: scripts
+        run: >
+          uv run --with pytest --with pathspec --with tree-sitter-language-pack
+          pytest test_soulreap.py -q

@@ -1,0 +1,6 @@
+# Store text with LF in the repo so shell/python scripts run on Linux and macOS
+# regardless of the committer's platform.
+* text=auto eol=lf
+
+# PowerShell is conventionally CRLF on Windows.
+*.ps1 text eol=crlf

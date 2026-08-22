@@ -1,0 +1,12 @@
+# Lint config for the soulreap scripts, so the skill does not inherit whatever
+# config happens to sit above whichever repo it is run from.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[lint.per-file-ignores]
+# Both files insert the script directory on sys.path before importing srlib.
+"soulreap.py" = ["E402"]
+"test_soulreap.py" = ["E402"]

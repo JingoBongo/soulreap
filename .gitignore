@@ -1,0 +1,13 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+
+# OS junk
+.DS_Store
+Thumbs.db
+nul
