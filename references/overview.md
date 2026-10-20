@@ -1,151 +1,52 @@
-# OVERVIEW.md template
+# OVERVIEW.md (soulreap map v10)
 
-Written last, to `soulreap/OVERVIEW.md`, once every card exists. Its inputs are
-`plan.json` (tree, non-code inventory, secrets, cycles) and `INDEX.md` (the role
-line of every file). Do not re-read source files to write it.
+The one file a reader opens first. The first `plan` scaffolds it; from then on `render`
+rewrites the five generated blocks and adds a line span after each anchor, a basis line
+under each section and a stale banner where the code moved — so re-read it before editing.
+Everything else is prose the reader wrote.
 
-```markdown
-# <project name>
+## Sections, in order
 
-`<commit>` · <n> source files · <n> lines · generated <date>
-
-## What this is
-
-Three to five sentences. What the system does, who uses it, where it runs.
-Say it the way you would to a new hire on their first morning.
-
-## Stack
-
-| Layer | Choice | Version | Where it is pinned |
-| --- | --- | --- | --- |
-| Runtime | Python | 3.12 | `pyproject.toml` |
-| Web | FastAPI | 0.115 | `pyproject.toml` |
-| Database | Supabase Postgres via asyncpg | — | `src/db/session.py` |
-| Deploy | Cloud Run, europe-west4 | — | `.github/workflows/deploy.yml` |
-
-## Entry points
-
-| Entry | File | Trigger |
-| --- | --- | --- |
-| HTTP API | `src/main.py` | `uvicorn src.main:app` |
-| Worker | `src/jobs/reindex.py` | Cloud Scheduler, hourly |
-| CLI | `scripts/backfill.py` | manual |
-
-## Layout
-
-```
-src/
-  api/        HTTP routes, one module per resource      (12 files, 1.4k lines)
-  db/         asyncpg pool, session helper, migrations   (4 files, 380 lines)
-  models/     Pydantic schemas shared by API and jobs    (7 files, 520 lines)
-  jobs/       Background workers, no HTTP surface        (3 files, 610 lines)
-tests/        pytest, mirrors src/                       (18 files, 2.1k lines)
-```
-
-One line per directory, saying what belongs there and what does not.
-
-## Non-code inventory
-
-- **CI:** `.github/workflows/{ci,deploy}.yml` — lint and test on PR, deploy on main
-- **Containers:** `Dockerfile` (distroless, non-root), `docker-compose.yml` for local Postgres
-- **Infrastructure:** `infra/live/{dev,stage,prod}/` — Terragrunt, one stack per environment
-- **Migrations:** `migrations/versions/` — 14 Alembic revisions, head `a3f9c2`
-- **Config keys:** `.env.example` declares `DATABASE_URL`, `JWT_SECRET`, `GOOGLE_CLIENT_ID` (names only)
-
-## What it talks to
-
-Paste `soulreap/diagrams/context.mmd`, then one sentence naming what the reader should
-notice — the surprising dependency, the service nobody documented, the thing that will be
-down at 3am.
-
-```mermaid
-<paste soulreap/diagrams/context.mmd>
-```
-
-## Architecture
-
-**Required when the system is more than one process.** A component/topology diagram of the
-runtime pieces — services, workers, datastores, queues, the external boundary — and how they
-are wired (queue / HTTP / exec / driver), *not* files and *not* imports. Save it as
-`soulreap/diagrams/architecture.mmd` (same folder as the rest) and paste it here, then one
-sentence on the shape: the single spine, the part that runs host-side only, the thing that
-degrades when a dependency is down. Source it from `docker-compose.yml`, the Entry points
-table, the deploy notes on the cards and `context.mmd` — never by re-reading source. No parser
-produces it: imports say who references whom inside one process, never how the deployed pieces
-talk. `render` lints it but never writes it. Skip this section (and say so) for a single-process
-library or CLI that has no topology to draw.
-
-```mermaid
-graph TD
-  subgraph run["Cloud Run (europe-west4)"]
-    api["api · src/main.py<br/>FastAPI gateway"]
-    worker["worker · src/jobs/reindex.py"]
-  end
-  db[("Supabase Postgres")]
-  sched(["Cloud Scheduler"])
-  sched -->|hourly trigger| worker
-  api -->|asyncpg| db
-  worker -->|asyncpg| db
-```
-
-Import coupling is **not** pasted as its own section — `Architecture` above is the runtime
-view a reader wants, and a second boxes-and-arrows picture of import counts reads as a rival
-architecture diagram and gets skipped. `render` still writes `soulreap/diagrams/packages.mmd`
-for anyone who wants the layering picture, and prints a one-line verdict — put that verdict
-(node count, density, any real layering violation) as a single bullet under Sharp edges, not
-as a diagram.
-
-## The main path
-
-**Required.** A sequence diagram of the one flow that matters most, written from the cards.
-Save it as `soulreap/diagrams/flow.mmd` — same folder as the generated two, so the diagram
-folder is complete — then paste it here. `render` never touches that file; it only reports
-whether it exists. No parser can produce it: dependency edges say who imports whom, never
-what happens in what order.
-
-```mermaid
-sequenceDiagram
-    Browser->>main.py: POST /auth/login
-    main.py->>routes/auth.py: login(email, password)
-    routes/auth.py->>db/session.py: QUERY users
-    db/session.py-->>routes/auth.py: user_row
-    routes/auth.py-->>Browser: Set-Cookie: session=<jwt>
-```
-
-## Running it
-
-```bash
-uv sync
-docker compose up -d postgres
-uv run alembic upgrade head
-uv run uvicorn src.main:app --reload
-```
-
-## Sharp edges
-
-- `src/jobs/reindex.py` and `src/db/pool.py` import each other — circular, breaks on reorder.
-- Password comparison lives only in `src/api/routes/auth.py`; change it nowhere else.
-- Coupling (from `packages.mmd`): 6 packages, density 20%, flat — `api` ↔ `db` is a tight
-  mutual pair. Quote `render`'s verdict; do not invent a nicer one.
-- 3 files fail to parse and have no cards: listed at the bottom of INDEX.md.
-```
+| section | written by | content |
+|---|---|---|
+| title + `stamp` block | render | commit, file and line counts, date |
+| What this is | reader | purpose, callers, where it runs |
+| How it runs | reader + `diagrams/architecture.dot` | every entry point as `[[file::symbol]]` and what it starts; the runtime picture (below) |
+| Where things are | `inventory` block + reader | generated layout and non-code inventory, then one line per area that matters |
+| State and data | `diagrams` block + reader | context picture and one ERD per database (`diagrams/erd-<database>.svg`), then who stores and writes what |
+| Sharp edges | `verdicts` block + reader | generated findings (cycles, unread schema, stale sections), then the traps |
+| Not covered | `coverage` block + reader | what the run read, what it did not, uncited checklist items, then reasons |
 
 ## Rules
 
-- Secrets: key names only, never values. `plan.json` already redacts them; keep it that way.
-- Every diagram gets a sentence saying what to look for. A diagram with no question is the
-  one readers skip; that is the whole reason the old per-file graph was dropped.
-- Three diagrams get pasted, one per question: `context.mmd` (external boundary),
-  `architecture.mmd` (runtime topology), `flow.mmd` (one request over time). Do not restate
-  one in another. Skip architecture only when the system genuinely is one process, and say
-  why. `packages.mmd` (import coupling) is generated but not pasted — it becomes the one-line
-  coupling bullet under Sharp edges.
-- A dotted edge in `packages.mmd` is a grouping artifact, not a cycle. Do not report it as
-  one; `plan.json.cycles` is the only authority on real import cycles.
-- `context.mmd` only sees literals — a service reached through a config value shows up as
-  nothing. Say so if you know of one that is missing.
-- Import cycles from `plan.json` go under Sharp edges. They are the fastest way to make a
-  reader distrust the layout, so name them.
-- The layout section counts come from `plan.json.tree`. Do not estimate them.
-- If something is unknown — no README, no obvious entry point — write "unknown" and move on.
-  A confident wrong answer here poisons every reader after you.
+* Never hand-edit between `<!-- soulreap:NAME -->` and `<!-- /soulreap:NAME -->`. A block
+  dropped from this skill's OVERVIEW is put back under its heading (`overview_restored`).
+* An OVERVIEW without those markers (an older map, v9 or earlier) is never rewritten; render
+  reports which blocks are missing (`overview_missing`). Report it — the user decides whether
+  to delete it for a fresh scaffold.
+* Prose cites code as `[[file::Symbol]]`; render keeps line spans live and adds a basis
+  line per section, so a section that went stale says so under its heading.
+
+## The runtime picture — `diagrams/architecture.dot`
+
+The one diagram no parser can draw: imports say who references whom inside a process, never
+how the running pieces talk. Write it in Graphviz dot (≤ 40 lines); `render` draws it and
+pastes it first in the diagrams block. Skip it only for a library with nothing running.
+
+* **Nodes:** each process or thread the entry points start (with its port), each store with
+  its key and file (`state.db` — user id → {plan, seen_at}), each config file, each
+  outside system with the endpoints called (`POST /charge`).
+* **Edges:** labelled with what crosses them — `GET /users`, `re-read each cycle`,
+  `put / pop`. Group one process's threads in a `subgraph cluster_…`.
+* **Source:** the packet's `What runs`, `State outside the process` and the context diagram,
+  plus what you already read — never re-read code for it.
+
+```dot
+digraph architecture {
+  rankdir=LR; node [shape=box, style=rounded];
+  subgraph cluster_app { label="app (one process)"; loop [label="main loop"]; ui [label="UI :8080"]; }
+  db [label="state.db (SQLite)\nuser id → {plan, seen_at}", shape=cylinder];
+  api [label="billing API", shape=cylinder];
+  loop -> db [label="put / get"]; ui -> db [label="get"]; loop -> api [label="POST /charge"];
+}
+```

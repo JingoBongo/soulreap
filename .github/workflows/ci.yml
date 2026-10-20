@@ -14,9 +14,11 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Lint (ruff)
         working-directory: scripts
-        run: uv run --with ruff ruff check --config ruff.toml .
+        run: >
+          uv run --with ruff ruff check --config ruff.toml
+          srlib soulreap.py hint.py conftest.py repo_fixtures.py
       - name: Tests (pytest)
         working-directory: scripts
         run: >
-          uv run --with pytest --with pathspec --with tree-sitter-language-pack
-          pytest test_soulreap.py -q
+          uv run --with pytest --with pygraphviz --with pathspec
+          --with tree-sitter-language-pack pytest -q

@@ -23,6 +23,12 @@ DENY_DIRS = {
     "target", "vendor", "site-packages", ".terraform", ".serverless",
     "coverage", "htmlcov", ".idea", ".vscode", ".gradle", ".cache",
     "soulreap",
+    # A git worktree is a second checkout of the same repository, so every file
+    # under it is a duplicate of one already walked: nvm-forecast's
+    # .claude/worktrees turned 99 files into 198, doubled every table in the
+    # facts and put a second copy of the repo on the context diagram. Denied by
+    # bare name so `.claude/worktrees` and any other `*/worktrees/` both go.
+    "worktrees",
 }
 ALLOWED_HIDDEN_DIRS = {".github", ".gitlab", ".circleci", ".claude", ".husky"}
 
@@ -36,8 +42,14 @@ BINARY_EXT = {
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".svg", ".pdf", ".zip",
     ".gz", ".tar", ".whl", ".so", ".dylib", ".dll", ".exe", ".bin", ".jar",
     ".class", ".pyc", ".woff", ".woff2", ".ttf", ".otf", ".eot", ".mp4",
-    ".mp3", ".wav", ".avif", ".db", ".sqlite", ".sqlite3",
+    ".mp3", ".wav", ".avif",
 }
+
+# Binary too, and read anyway. A SQLite file states its own schema in
+# `sqlite_master`, which is a DECLARATION — the same kind of fact a migration is,
+# and a better one: it is what the database actually has rather than what somebody
+# meant to build. Reading it costs the standard library and nothing else.
+DATABASE_EXT = {".db", ".sqlite", ".sqlite3"}
 
 CODE_LANGS = {
     ".py": "python", ".pyi": "python",
@@ -59,6 +71,18 @@ _DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 _CONFIG_EXT = {".yml", ".yaml", ".toml", ".ini", ".cfg", ".json", ".conf", ".properties", ".xml"}
 _DATA_EXT = {".csv", ".tsv", ".jsonl", ".ndjson", ".parquet"}
 _STYLE_EXT = {".css", ".scss", ".sass", ".less"}
+
+# Dependency manifests get their own category because they answer a question no
+# other non-code file does: a package name IS the name of the system on the other
+# end of it. They used to scatter into `docs` (requirements*.txt) and `config`
+# (pyproject.toml, package.json), where nothing ever looked at them.
+_MANIFEST_NAMES = {"pyproject.toml", "package.json", "go.mod", "cargo.toml", "gemfile"}
+
+
+def _is_manifest(lower: str) -> bool:
+    """Substring, not prefix, on requirements: fuse_core's own file is named
+    `fuse_requirements.txt`, and so are `dev-requirements.txt` and friends."""
+    return lower in _MANIFEST_NAMES or (lower.endswith(".txt") and "requirements" in lower)
 
 
 @dataclass
@@ -98,11 +122,15 @@ def classify(path: Path | str) -> tuple[str, str | None, str]:
         return "secret", None, "secret"
     if lower.endswith((".pem", ".key", ".p12", ".pfx", ".keystore")):
         return "secret", None, "secret"
+    if suffix in DATABASE_EXT:
+        return "non_code", None, "database"
     if name in LOCKFILES or suffix in BINARY_EXT or ".min." in lower:
         return "skip", None, "skip"
     if suffix in CODE_LANGS:
         return "code", CODE_LANGS[suffix], "code"
 
+    if _is_manifest(lower):
+        return "non_code", None, "manifest"
     if any(marker in posix for marker in _CI_MARKERS):
         return "non_code", None, "ci"
     if any(lower.startswith(d) or lower == d for d in _DOCKER_NAMES):
@@ -251,6 +279,16 @@ def walk(root: Path | str) -> list[FileEntry]:
             try:
                 size = full.stat().st_size
             except OSError:
+                continue
+            if category == "database":
+                # Neither capped nor hashed here: a database is read through its
+                # header pages, so its size says nothing about the cost, and
+                # hashing 102 MB of rows to answer a question about the schema is
+                # work for nothing. `plan` hashes the schema it reads out instead.
+                entries.append(FileEntry(
+                    path=rel, sha="", lines=0, kind=kind, lang=None,
+                    category=category, size=size,
+                ))
                 continue
             if size > MAX_FILE_BYTES:
                 continue

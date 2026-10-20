@@ -5,6 +5,10 @@ target-version = "py311"
 
 [lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+# The call-graph tree and the diagrams print ×, ↑, ↻ and · as glyphs a reader sees,
+# not as identifiers. RUF001 guards against a homoglyph slipping into code; here the
+# character IS the output, and "x2" next to a function name reads like part of a name.
+ignore = ["RUF001"]
 
 [lint.per-file-ignores]
 # Both files insert the script directory on sys.path before importing srlib.

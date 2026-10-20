@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import posixpath
 from dataclasses import dataclass, field
+from pathlib import Path
+
+from .graph_js import JsConfigs, js_candidates
 
 _PY_SUFFIXES = (".py", ".pyi")
-_JS_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
-_JS_INDEXES = tuple(f"/index{ext}" for ext in _JS_SUFFIXES)
 
 
 @dataclass
@@ -19,6 +20,21 @@ class Graph:
     cycles: list[list[str]] = field(default_factory=list)
     # path -> {module as written: repo file it resolved to, or None}
     resolved: dict[str, dict[str, str | None]] = field(default_factory=dict)
+
+
+def _ancestor_prefixes(from_path: str) -> list[str]:
+    """Directory prefixes to try, nearest first.
+
+    A workspace member keeps its package under its own ``src/`` directory, so an
+    absolute intra-package import (``from afas_proxy.config import ...``) names a
+    path that exists only relative to that member — never relative to the repo
+    root. Trying each ancestor of the importing file resolves it without hardcoding
+    a layout. Nearest first, so a file binds to the ``config.py`` in its own package
+    rather than a same-named one in a sibling member.
+    """
+    directory = posixpath.dirname(from_path)
+    parts = directory.split("/") if directory else []
+    return ["/".join(parts[:i]) for i in range(len(parts), -1, -1)]
 
 
 def _python_candidates(module: str, from_path: str) -> list[str]:
@@ -33,30 +49,15 @@ def _python_candidates(module: str, from_path: str) -> list[str]:
         return [f"{target}{ext}" for ext in _PY_SUFFIXES] + [f"{target}/__init__.py"]
 
     parts = module.split(".")
+    prefixes = _ancestor_prefixes(from_path)
     candidates: list[str] = []
     for start in range(len(parts)):
         stem = "/".join(parts[start:])
-        candidates += [f"{stem}{ext}" for ext in _PY_SUFFIXES]
-        candidates.append(f"{stem}/__init__.py")
-        candidates += [f"src/{stem}.py", f"src/{stem}/__init__.py"]
+        for prefix in prefixes:
+            for base in ((f"{prefix}/{stem}", f"{prefix}/src/{stem}") if prefix else (stem, f"src/{stem}")):
+                candidates += [f"{base}{ext}" for ext in _PY_SUFFIXES]
+                candidates.append(f"{base}/__init__.py")
     return candidates
-
-
-def _js_candidates(module: str, from_path: str) -> list[str]:
-    """Possible repo paths for a JS/TS import specifier."""
-    if module.startswith("."):
-        stem = posixpath.normpath(posixpath.join(posixpath.dirname(from_path), module))
-    elif module.startswith("@/") or module.startswith("~/"):
-        stem = module[2:]
-    else:
-        return []
-    stems = [stem, f"src/{stem}", f"app/{stem}"]
-    out: list[str] = []
-    for candidate in stems:
-        out.append(candidate)
-        out += [f"{candidate}{ext}" for ext in _JS_SUFFIXES]
-        out += [f"{candidate}{index}" for index in _JS_INDEXES]
-    return out
 
 
 def _strongly_connected(edges: dict[str, list[str]]) -> list[list[str]]:
@@ -97,14 +98,30 @@ def _strongly_connected(edges: dict[str, list[str]]) -> list[list[str]]:
     return result
 
 
-def build_graph(facts: dict) -> Graph:
+def _string_ref_target(ref: str, from_path: str, known: set[str]) -> str | None:
+    """The repo module a dotted string names, whole path only (never a trailing fragment), dropping
+    trailing parts for a class path: `apps.webhooks.apps.WebhooksConfig` → apps/webhooks/apps.py."""
+    parts = ref.split(".")
+    for cut in range(len(parts), 1, -1):
+        stem = "/".join(parts[:cut])
+        for prefix in _ancestor_prefixes(from_path):
+            for base in ((f"{prefix}/{stem}", f"{prefix}/src/{stem}") if prefix else (stem, f"src/{stem}")):
+                for candidate in (f"{base}.py", f"{base}/__init__.py"):
+                    if candidate in known and candidate != from_path:
+                        return candidate
+    return None
+
+
+def build_graph(facts: dict, root: Path | str | None = None) -> Graph:
     """Resolve every import to a repo file when possible.
 
     *facts* maps repo-relative paths to FileFacts (or plain dicts with the
-    same shape). Imports that resolve to nothing are third-party and dropped.
+    same shape). Imports that resolve to nothing are third-party and dropped. *root*, when
+    given, lets JS/TS aliases follow the repo's tsconfig/jsconfig `paths` and `baseUrl`.
     """
     known = set(facts)
     graph = Graph()
+    configs = JsConfigs(root)
 
     for path in sorted(known):
         entry = facts[path]
@@ -115,12 +132,8 @@ def build_graph(facts: dict) -> Graph:
 
         for item in raw_imports:
             module = item["module"] if isinstance(item, dict) else str(item)
-            if lang == "python":
-                candidates = _python_candidates(module, path)
-            elif lang in {"typescript", "tsx", "javascript"}:
-                candidates = _js_candidates(module, path)
-            else:
-                candidates = _js_candidates(module, path)
+            candidates = (_python_candidates(module, path) if lang == "python"
+                          else js_candidates(module, path, configs))
             per_module.setdefault(module, None)
             for candidate in candidates:
                 if candidate in known and candidate != path:
@@ -128,6 +141,22 @@ def build_graph(facts: dict) -> Graph:
                     if candidate not in resolved:
                         resolved.append(candidate)
                     break
+            if lang == "python" and isinstance(item, dict):
+                # `from . import rank` / `from pkg import models`: a name that is itself a module
+                # is a dependency on that module, not only on the package's __init__ — without
+                # this, mapplan → rank was invisible and reach from soulreap's CLI never got there.
+                for name in item.get("names") or []:
+                    sub = f"{module}{'' if module.endswith('.') else '.'}{name}"
+                    hit = next((c for c in _python_candidates(sub, path) if c in known and c != path), None)
+                    if hit and hit not in resolved:
+                        resolved.append(hit)
+
+        if lang == "python":
+            refs = entry.string_refs if hasattr(entry, "string_refs") else entry.get("string_refs", [])
+            for ref in refs or []:
+                hit = _string_ref_target(ref, path, known)
+                if hit and hit not in resolved:
+                    resolved.append(hit)
 
         graph.imports[path] = resolved
         graph.resolved[path] = per_module
